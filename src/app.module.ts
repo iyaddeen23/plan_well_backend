@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { AppController } from './app.controller';
 import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { JournalModule } from './journal/journal.module';
@@ -24,5 +25,6 @@ import { FinancialsModule } from './financials/financials.module';
     TrialBalanceModule,
     FinancialsModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}
