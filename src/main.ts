@@ -53,9 +53,9 @@ async function bootstrap() {
   const isProd = process.env.NODE_ENV === 'production';
   if (!isProd) {
     const config = new DocumentBuilder()
-      .setTitle('Planwell Accounting API')
+      .setTitle('Mage Accounting API')
       .setDescription(
-        'REST API for the Planwell Insurance Brokerage accounting dashboard.\n\n' +
+        'REST API for the Mage Accounting Software dashboard.\n\n' +
         'All transactional endpoints require a Bearer token from `POST /api/v1/auth/signin`.',
       )
       .setVersion('1.0')
@@ -81,7 +81,7 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT ?? '4000', 10);
   await app.listen(port);
 
-  logger.log(`Planwell API running  port=${port}  env=${process.env.NODE_ENV ?? 'development'}`);
+  logger.log(`Mage Accounting API running  port=${port}  env=${process.env.NODE_ENV ?? 'development'}`);
   logger.log(`CORS: ${explicitOrigins.join(', ')} + *.vercel.app`);
 }
 
