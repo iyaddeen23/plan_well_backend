@@ -1,5 +1,5 @@
 -- ============================================================
---  Planwell Accounting — Initial Supabase Schema
+--  Magebooks Accounting — Initial Supabase Schema
 --  Run this in the Supabase SQL Editor (Dashboard → SQL Editor)
 --  or via: supabase db push
 -- ============================================================

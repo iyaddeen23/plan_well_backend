@@ -8,10 +8,10 @@ export class CreateJournalDto {
   @IsDateString()
   date: string;
 
-  @ApiProperty({ example: 'JNL-2026-001' })
+  @ApiPropertyOptional({ example: 'JNL-2026-001' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  ref: string;
+  ref?: string;
 
   @ApiProperty({ example: 'Depreciation charge — Motor Vehicles' })
   @IsString()

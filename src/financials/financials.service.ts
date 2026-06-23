@@ -1,163 +1,71 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { SupabaseService } from '../supabase/supabase.service';
 
-const FY = {
-  comm:    925168,
-  invest:  293885,
-  exp:     1113248,
-  products: [392063, 180912, 151793, 94760, 59554, 28411, 17140, 535],
-  expenses: {
-    sal: 332519, dir: 24000, mgmt: 69500, prof: 4828, print: 1405, comm2: 4740,
-    util: 50770, levy: 27223, audit: 6000, fuel: 37410, trav: 3664, rep: 4606,
-    rent: 60150, refresh: 18950, bank: 7559, office: 2560, biz: 153397, ins: 1050,
-    fx: 183807, dep: 112860, amort: 6250,
-  },
-  insurers: {
-    names:  ['Enterprise','Serene','Ent. Life','Provident','Allianz Life','Coronation','Vanguard','Phoenix','GLICO','State'],
-    v2026:  [372254, 154725, 91579, 56050, 38755, 40947, 29673, 27877, 12833, 17715],
-    v2025:  [2741, 0, 111065, 71358, 23419, 710841, 14917, 1146, 13238, 14178],
-  },
-  loan:         [47565, 49052, 50568, 52115, 53693, 55303, 56945, 58621, 60331, 62076, 63857, 65675],
-  totalAssets:  1272084,
-  totalEquity:  1112103,
-  retainedEarningsOpen: -98567,
+/** Maps every API period key to the DB `period` values it covers. */
+const PERIOD_MONTHS: Record<string, string[]> = {
+  jan: ['jan'], feb: ['feb'], mar: ['mar'],
+  apr: ['apr'], may: ['may'], jun: ['jun'],
+  jul: ['jul'], aug: ['aug'], sep: ['sep'],
+  oct: ['oct'], nov: ['nov'], dec: ['dec'],
+  q1:  ['jan', 'feb', 'mar'],
+  q2:  ['apr', 'may', 'jun'],
+  q3:  ['jul', 'aug', 'sep'],
+  q4:  ['oct', 'nov', 'dec'],
+  fy:  ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'],
 };
 
-/** Prior-year (2025) figures for comparative statements */
-const PRIOR_YEAR = {
-  comm:   1082431,
-  exp:    1089426,
-  inv:    293885,
-  fc:     53003,
-  tx:     70996,
-  net:    5628,
-  opLoss: 1082431 - 1089426,
-  pbit:   1082431 - 1089426 + 293885,
-  /** Key ratios as reported in the 2025 audited financial statements */
-  ratios: {
-    npm:            '0.61',   // net profit margin %
-    cti:            '117.8',  // cost-to-income %
-    roa:            '8.21',   // return on assets %
-    roe:            '0.50',   // return on equity %
-    ic:             '0.11',   // interest cover ×
-    revenueToStaff: '2.78',   // revenue / staff cost ×
-    cr:             '2.77',   // current ratio ×
-  },
+const PERIOD_META: Record<string, { label: string; short: string }> = {
+  jan: { short: 'Jan 2026',        label: 'January 2026'              },
+  feb: { short: 'Feb 2026',        label: 'February 2026'             },
+  mar: { short: 'Mar 2026',        label: 'March 2026'                },
+  apr: { short: 'Apr 2026',        label: 'April 2026'                },
+  may: { short: 'May 2026',        label: 'May 2026'                  },
+  jun: { short: 'Jun 2026',        label: 'June 2026'                 },
+  jul: { short: 'Jul 2026',        label: 'July 2026'                 },
+  aug: { short: 'Aug 2026',        label: 'August 2026'               },
+  sep: { short: 'Sep 2026',        label: 'September 2026'            },
+  oct: { short: 'Oct 2026',        label: 'October 2026'              },
+  nov: { short: 'Nov 2026',        label: 'November 2026'             },
+  dec: { short: 'Dec 2026',        label: 'December 2026'             },
+  q1:  { short: 'Q1 2026',         label: 'Q1 2026 — Jan to Mar'      },
+  q2:  { short: 'Q2 2026',         label: 'Q2 2026 — Apr to Jun'      },
+  q3:  { short: 'Q3 2026',         label: 'Q3 2026 — Jul to Sep'      },
+  q4:  { short: 'Q4 2026',         label: 'Q4 2026 — Oct to Dec'      },
+  fy:  { short: 'Full Year 2026',  label: 'Full Year 2026 — Jan to Dec' },
 };
 
-/** Full statement of financial position — year-end 2026 balances */
-const BALANCE_SHEET = {
-  assets: {
-    nonCurrent: {
-      ppe:         72724,
-      intangibles: 28750,
-      total:       101474,
-    },
-    current: {
-      rentPrepaid:        65000,
-      commReceivable:     209821,  // commission receivable
-      interestReceivable: 538089,  // fixed-deposit interest receivable
-      tradeReceivables:   747910,  // sum of the two above
-      deferredTax:        3308,
-      taxAssets:          36000,
-      cashAtBank:         354392,
-      total:              1170610,
-    },
-    total: 1272084,
-  },
-  liabilities: {
-    bankOverdraft:  260077,
-    tradeCreditors: 103950,
-    accruals:       18057,
-    taxPayable:     39763,
-    otherPayables:  675,
-    total:          422522,
-  },
-  equity: {
-    statedCapital: 1215994,
-    retainedOpen:  -98567,
-  },
-  netCashPosition: 94315,
-};
+const MONTHS_LIST = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
 
-/** Loan details and accrued interest history */
-const LOAN = {
-  principal:      26780,
-  annualRatePct:  20,
-  monthlyRatePct: 20 / 12,
-  penaltyPct:     2,
-  startYear:      2022,
-  history: {
-    years:           ['2022', '2023', '2024', '2025'],
-    accruedInterest: [9665,   9776,   12399,  15724],
-  },
+/** Date boundaries for each period key (2026). Used for date-range queries
+ *  on tables whose `period` column may store free-form values (e.g. bank_transactions). */
+const PERIOD_DATES: Record<string, { from: string; to: string }> = {
+  jan: { from: '2026-01-01', to: '2026-01-31' },
+  feb: { from: '2026-02-01', to: '2026-02-28' },
+  mar: { from: '2026-03-01', to: '2026-03-31' },
+  apr: { from: '2026-04-01', to: '2026-04-30' },
+  may: { from: '2026-05-01', to: '2026-05-31' },
+  jun: { from: '2026-06-01', to: '2026-06-30' },
+  jul: { from: '2026-07-01', to: '2026-07-31' },
+  aug: { from: '2026-08-01', to: '2026-08-31' },
+  sep: { from: '2026-09-01', to: '2026-09-30' },
+  oct: { from: '2026-10-01', to: '2026-10-31' },
+  nov: { from: '2026-11-01', to: '2026-11-30' },
+  dec: { from: '2026-12-01', to: '2026-12-31' },
+  q1:  { from: '2026-01-01', to: '2026-03-31' },
+  q2:  { from: '2026-04-01', to: '2026-06-30' },
+  q3:  { from: '2026-07-01', to: '2026-09-30' },
+  q4:  { from: '2026-10-01', to: '2026-12-31' },
+  fy:  { from: '2026-01-01', to: '2026-12-31' },
 };
-
-/** GRA CIT/WHT statement entries (documentary — actual Ghana Revenue Authority records) */
-const TAX_STATEMENT = {
-  cit2025: [
-    { ref: '1',   date: '01 Jan 2025', description: 'CG Assessment 2025',            debit:  8843, credit: null, balance:  8843   },
-    { ref: '2-10',date: 'Feb 2025',    description: 'WHT credits various payers',     debit:  1044, credit: null, balance:  7799   },
-    { ref: '14',  date: '28 Feb 2025', description: 'WHT C0002862654',                debit:  1330, credit: null, balance:  6469   },
-    { ref: '20',  date: '07 Apr 2025', description: 'Receipt payment',                debit:  2087, credit: null, balance:  4382   },
-    { ref: '44',  date: '17 Apr 2025', description: 'WHT C0002862654 (large)',        debit:  2303, credit: null, balance: -3716   },
-    { ref: '35',  date: '30 Sep 2025', description: 'WHT C0003168875',                debit:     4, credit: null, balance: -3.58   },
-  ],
-  cit2024: [
-    { ref: '1',   date: '19 Feb 2024', description: 'WHT Credit C0003004783',         debit: null, credit:    23, balance:    -23  },
-    { ref: '14',  date: '26 Apr 2024', description: 'Receipt Payment',                debit: null, credit:  4501, balance:  -6286  },
-    { ref: '18',  date: '26 Jun 2025', description: 'Processed Returns 2024',         debit: null, credit: 25902, balance:  19413  },
-    { ref: '22',  date: '16 Sep 2025', description: 'Receipt Payment',                debit: null, credit:  5911, balance:  12345  },
-    { ref: '51',  date: '23 Oct 2025', description: 'WHT C0002718731',                debit: null, credit:   441, balance:  10982  },
-    { ref: '52',  date: '03 Dec 2025', description: 'WHT C0002864959',                debit: null, credit:    69, balance:  10914  },
-  ],
-};
-
-const QUARTERS: Record<string, { f: number; fc: number; tx: number; exchLoss: number; label: string; short: string }> = {
-  q1: { f: 0.20, fc: 13251, tx: 14000, exchLoss: 32000,  label: 'Q1 2026 — Jan to Mar',       short: 'Q1 2026' },
-  q2: { f: 0.28, fc: 13251, tx: 18500, exchLoss: 58000,  label: 'Q2 2026 — Apr to Jun',       short: 'Q2 2026' },
-  q3: { f: 0.26, fc: 13251, tx: 17200, exchLoss: 49000,  label: 'Q3 2026 — Jul to Sep',       short: 'Q3 2026' },
-  q4: { f: 0.26, fc: 13251, tx: 15342, exchLoss: 44807,  label: 'Q4 2026 — Oct to Dec',       short: 'Q4 2026' },
-  fy: { f: 1.00, fc: 53003, tx: 65042, exchLoss: 183807, label: 'Full Year 2026 — Jan to Dec', short: 'Full Year 2026' },
-};
-
-const SIX_YEARS = {
-  years: ['2021','2022','2023','2024','2025','2026'],
-  comm:  [512400,648300,782500,875200,1082431,925168],
-  exp:   [498000,620000,740000,830000,1089426,1113248],
-  inv:   [82000,110000,145000,198000,293885,293885],
-  net:   [42000,58200,78000,95000,5628,-12240],
-  cash:  [198000,215000,248000,301000,354000,354392],
-};
-
-const SIX_YTD = {
-  years: ['2021','2022','2023','2024','2025','2026'],
-  comm:  [209000,264800,319500,357250,441800,444081],
-  exp:   [203000,253000,302000,338750,444800,555000],
-  inv:   [33500,44900,59200,80900,120100,146860],
-  net:   [17200,23700,31900,38800,2300,-22900],
-  cash:  [182000,195000,224000,274000,320000,354392],
-};
-
-function sharedFields() {
-  return {
-    balanceSheet:  BALANCE_SHEET,
-    loanSchedule:  FY.loan,
-    loanHistory:   LOAN.history,
-    loanDetails:   LOAN,
-    taxStatement:  TAX_STATEMENT,
-    priorYear:     PRIOR_YEAR,
-    fyFc:          QUARTERS.fy.fc,
-    fyTx:          QUARTERS.fy.tx,
-    fyExch:        QUARTERS.fy.exchLoss,
-    fyExpenses:    FY.expenses,
-  };
-}
 
 @Injectable()
 export class FinancialsService {
+  constructor(private readonly supabase: SupabaseService) {}
+
   getPeriods() {
     return {
-      quarters: Object.entries(QUARTERS).map(([key, q]) => ({ key, label: q.label, short: q.short })),
+      months:    MONTHS_LIST.map(k => ({ key: k, ...PERIOD_META[k] })),
+      quarters:  ['q1','q2','q3','q4','fy'].map(k => ({ key: k, ...PERIOD_META[k] })),
       multiyear: [
         { key: '6y',   label: 'Last 6 Years 2021–2026' },
         { key: '6ytd', label: 'Last 6 Years YTD' },
@@ -165,76 +73,329 @@ export class FinancialsService {
     };
   }
 
-  computePeriod(period: string) {
-    if (period === '6y') {
-      return { is6: true, period, label: 'Last 6 Years 2021–2026', data: SIX_YEARS, ...sharedFields() };
-    }
-    if (period === '6ytd') {
-      return { is6: true, period, label: 'Last 6 Years YTD',        data: SIX_YTD,   ...sharedFields() };
+  async computePeriod(userId: string, period: string) {
+    if (period === '6y')   return this.compute6y(userId);
+    if (period === '6ytd') return this.compute6ytd(userId);
+
+    const dbPeriods = PERIOD_MONTHS[period];
+    if (!dbPeriods) throw new BadRequestException(
+      `Unknown period "${period}". Valid: jan–dec, q1, q2, q3, q4, fy, 6y, 6ytd`,
+    );
+
+    const meta = PERIOD_META[period];
+    const dateBounds = PERIOD_DATES[period];
+
+    // Fetch all source tables in parallel
+    const [prodRows, imprestRows, jrnRows, bankRows, arRows] = await Promise.all([
+      this.supabase.db
+        .from('production_entries')
+        .select('commission, product, insurer')
+        .eq('user_id', userId)
+        .in('period', dbPeriods)
+        .then(r => { if (r.error) throw new Error(r.error.message); return r.data ?? []; }),
+
+      this.supabase.db
+        .from('imprest_transactions')
+        .select('category, amount')
+        .eq('user_id', userId)
+        .eq('tx_type', 'payment')
+        .in('period', dbPeriods)
+        .then(r => { if (r.error) throw new Error(r.error.message); return r.data ?? []; }),
+
+      this.supabase.db
+        .from('journal_entries')
+        .select('dr_account, cr_account, amount')
+        .eq('user_id', userId)
+        .in('period', dbPeriods)
+        .then(r => { if (r.error) throw new Error(r.error.message); return r.data ?? []; }),
+
+      // Use date-range filtering for bank_transactions so the result is correct
+      // regardless of what period string format was stored in that column.
+      this.supabase.db
+        .from('bank_transactions')
+        .select('tx_type, amount_ghc')
+        .eq('user_id', userId)
+        .gte('date', dateBounds.from)
+        .lte('date', dateBounds.to)
+        .then(r => { if (r.error) throw new Error(r.error.message); return r.data ?? []; }),
+
+      this.supabase.db
+        .from('ar_entries')
+        .select('outstanding_balance')
+        .eq('user_id', userId)
+        .then(r => { if (r.error) throw new Error(r.error.message); return r.data ?? []; }),
+    ]);
+
+    // --- Commission income, product & insurer breakdown ---
+    let comm = 0;
+    const byProduct: Record<string, number> = {};
+    const byInsurer: Record<string, number> = {};
+    for (const row of prodRows) {
+      const c = Number(row.commission);
+      comm += c;
+      byProduct[row.product] = (byProduct[row.product] ?? 0) + c;
+      byInsurer[row.insurer] = (byInsurer[row.insurer] ?? 0) + c;
     }
 
-    const q = QUARTERS[period];
-    if (!q) throw new BadRequestException(`Unknown period "${period}". Valid: q1, q2, q3, q4, fy, 6y, 6ytd`);
+    // --- Expenses from imprest payments, grouped by category ---
+    const expByCategory: Record<string, number> = {};
+    for (const row of imprestRows) {
+      const a = Number(row.amount);
+      expByCategory[row.category] = (expByCategory[row.category] ?? 0) + a;
+    }
 
-    const { f, fc, tx, exchLoss: exch } = q;
-    const comm   = Math.round(FY.comm    * f);
-    const inv    = Math.round(FY.invest  * f);
-    const exp    = Math.round(FY.exp     * f);
-    const totRev = comm + inv - exch;
+    // --- Journal entries: non-cash items & below-the-line figures ---
+    // Matching against dr/cr account names — uses the naming conventions in the journal form.
+    let inv = 0, fc = 0, exchLoss = 0, tx = 0;
+    for (const row of jrnRows) {
+      const dr  = (row.dr_account ?? '').toLowerCase();
+      const cr  = (row.cr_account ?? '').toLowerCase();
+      const amt = Number(row.amount);
+
+      // Investment / interest income  →  cr account
+      if (cr.includes('interest income') || cr.includes('investment income')) {
+        inv += amt;
+      }
+
+      // Finance cost / loan interest  →  dr account
+      if (dr.includes('finance cost') || dr.includes('interest expense') || dr.includes('loan interest')) {
+        fc += amt;
+      }
+
+      // Exchange / forex loss  →  dr account
+      if (dr.includes('exchange loss') || dr.includes('fx loss') || dr.includes('foreign exchange loss')) {
+        exchLoss += amt;
+      }
+
+      // Income tax / current tax charge  →  dr account
+      if (dr.includes('income tax') || dr.includes('tax expense') || dr.includes('current tax')) {
+        tx += amt;
+      }
+
+      // Non-cash operating expenses (depreciation, amortisation)  →  dr account, added to expense pool
+      if (dr.includes('depreciation') || dr.includes('amortis') || dr.includes('amortiz')) {
+        expByCategory[row.dr_account] = (expByCategory[row.dr_account] ?? 0) + amt;
+      }
+    }
+
+    const exp    = Object.values(expByCategory).reduce((s, v) => s + v, 0);
     const opLoss = comm - exp;
     const pbit   = opLoss + inv;
     const pbt    = pbit - fc;
     const pat    = pbt  - tx;
 
-    const E: Record<string, number> = {};
-    for (const [k, v] of Object.entries(FY.expenses)) E[k] = Math.round(v * f);
+    // --- Cash position from bank transactions ---
+    let cash = 0;
+    for (const row of bankRows) {
+      cash += row.tx_type === 'Credit (Deposit)' ? Number(row.amount_ghc) : -Number(row.amount_ghc);
+    }
 
-    const products    = FY.products.map(v => Math.round(v * f));
-    const insurerVals = FY.insurers.v2026.map(v => Math.round(v * f));
+    // --- Commission receivable from AR ---
+    const commReceivable = arRows.reduce((s, r) => s + Number(r.outstanding_balance), 0);
 
-    const npm  = (pat  / comm                           * 100).toFixed(2);
-    const cti  = (exp  / comm                           * 100).toFixed(1);
-    const roa  = (pbit / BALANCE_SHEET.assets.total     * 100).toFixed(2);
-    const ic   = (pbit / fc).toFixed(2);
-    const roe  = (pat  / FY.totalEquity                 * 100).toFixed(2);
-    const at   = (comm / BALANCE_SHEET.assets.total).toFixed(3);
-    const cr   = (BALANCE_SHEET.assets.current.total / BALANCE_SHEET.liabilities.total).toFixed(2);
-    const reClose = FY.retainedEarningsOpen + pat;
+    // --- Ratios (guard against division by zero) ---
+    const npm = comm ? ((pat  / comm) * 100).toFixed(2) : '0.00';
+    const cti = comm ? ((exp  / comm) * 100).toFixed(1) : '0.0';
+    const ic  = fc   ? (pbit / fc).toFixed(2)           : '0.00';
 
-    return {
-      is6: false, period,
-      label:       q.short,
-      periodLabel: q.label,
-      factor:      f,
-      income:      { comm, inv, exch, totRev },
-      profitLoss:  { opLoss, pbit, pbt, pat, fc, tx },
-      expenses:    E,
-      products,
-      insurers: {
-        names:      FY.insurers.names,
-        values2026: insurerVals,
-        values2025: FY.insurers.v2025.map(v => Math.round(v * f)),
+    const balanceSheet = {
+      assets: {
+        nonCurrent: { ppe: 0, intangibles: 0, total: 0 },
+        current: {
+          commReceivable,
+          cashAtBank: Math.max(cash, 0),
+          total: commReceivable + Math.max(cash, 0),
+        },
+        total: commReceivable + Math.max(cash, 0),
       },
-      ratios:      { npm, cti, roa, ic, roe, at, cr },
-      equity:      { retainedOpen: FY.retainedEarningsOpen, pat, retainedClose: reClose },
-      ...sharedFields(),
+      liabilities: {
+        bankOverdraft: cash < 0 ? Math.abs(cash) : 0,
+        total:         cash < 0 ? Math.abs(cash) : 0,
+      },
+      equity:          { statedCapital: 0, retainedOpen: 0 },
+      netCashPosition: cash,
     };
-  }
 
-  getInsurers() {
     return {
-      names:      FY.insurers.names,
-      values2026: FY.insurers.v2026,
-      values2025: FY.insurers.v2025,
+      is6:         false,
+      period,
+      label:       meta.short,
+      periodLabel: meta.label,
+      factor:      1,
+      income:      { comm, inv, exch: exchLoss, totRev: comm + inv - exchLoss },
+      profitLoss:  { opLoss, pbit, pbt, pat, fc, tx },
+      expenses:    expByCategory,
+      expTotal:    exp,
+      products:    byProduct,
+      insurers:    byInsurer,
+      ratios:      { npm, cti, ic, roa: '0.00', roe: '0.00', at: '0.000', cr: '0.00' },
+      equity:      { retainedOpen: 0, pat, retainedClose: pat },
+      balanceSheet,
+      priorYear:     null,
+      loanSchedule:  [],
+      loanHistory:   { years: [], accruedInterest: [] },
+      loanDetails:   {},
+      taxStatement:  { cit2025: [], cit2024: [] },
+      fyFc:          0,
+      fyTx:          0,
+      fyExch:        0,
+      fyExpenses:    {},
     };
   }
 
-  getExpenseBreakdown(period = 'fy') {
-    const q = QUARTERS[period];
-    if (!q) throw new BadRequestException(`Unknown period "${period}"`);
-    const f = q.f;
-    const result: Record<string, number> = {};
-    for (const [k, v] of Object.entries(FY.expenses)) result[k] = Math.round(v * f);
-    return { period, factor: f, expenses: result, total: Object.values(result).reduce((a, b) => a + b, 0) };
+  async getInsurers(userId: string) {
+    const year  = new Date().getFullYear();
+    const prior = year - 1;
+
+    const query = (from: string, to: string) =>
+      this.supabase.db
+        .from('production_entries')
+        .select('insurer, commission')
+        .eq('user_id', userId)
+        .gte('date', from)
+        .lte('date', to)
+        .then(r => r.data ?? []);
+
+    const [currRows, priorRows] = await Promise.all([
+      query(`${year}-01-01`,  `${year}-12-31`),
+      query(`${prior}-01-01`, `${prior}-12-31`),
+    ]);
+
+    const agg = (rows: any[]) => {
+      const m: Record<string, number> = {};
+      for (const r of rows) m[r.insurer] = (m[r.insurer] ?? 0) + Number(r.commission);
+      return m;
+    };
+
+    return { [year]: agg(currRows), [prior]: agg(priorRows) };
+  }
+
+  async getExpenseBreakdown(userId: string, period = 'fy') {
+    const dbPeriods = PERIOD_MONTHS[period];
+    if (!dbPeriods) throw new BadRequestException(`Unknown period "${period}"`);
+
+    const { data, error } = await this.supabase.db
+      .from('imprest_transactions')
+      .select('category, amount')
+      .eq('user_id', userId)
+      .eq('tx_type', 'payment')
+      .in('period', dbPeriods);
+
+    if (error) throw new Error(error.message);
+
+    const expenses: Record<string, number> = {};
+    for (const row of data ?? []) {
+      expenses[row.category] = (expenses[row.category] ?? 0) + Number(row.amount);
+    }
+    const total = Object.values(expenses).reduce((s, v) => s + v, 0);
+    return { period, expenses, total };
+  }
+
+  // ─── Multi-year helpers ───────────────────────────────────────────────────
+
+  private async compute6y(userId: string) {
+    const years = [2021, 2022, 2023, 2024, 2025, 2026];
+    const rows  = await Promise.all(years.map(yr => this.yearSummary(userId, yr)));
+    return {
+      is6: true, period: '6y', label: 'Last 6 Years 2021–2026',
+      data: {
+        years: years.map(String),
+        comm:  rows.map(r => r.comm),
+        exp:   rows.map(r => r.exp),
+        inv:   rows.map(r => r.inv),
+        net:   rows.map(r => r.net),
+        cash:  rows.map(r => r.cash),
+      },
+      ...this.emptyShared(),
+    };
+  }
+
+  private async compute6ytd(userId: string) {
+    const years  = [2021, 2022, 2023, 2024, 2025, 2026];
+    const today  = new Date();
+    const mmdd   = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const rows   = await Promise.all(years.map(yr => this.yearSummary(userId, yr, `${yr}-${mmdd}`)));
+    return {
+      is6: true, period: '6ytd', label: 'Last 6 Years YTD',
+      data: {
+        years: years.map(String),
+        comm:  rows.map(r => r.comm),
+        exp:   rows.map(r => r.exp),
+        inv:   rows.map(r => r.inv),
+        net:   rows.map(r => r.net),
+        cash:  rows.map(r => r.cash),
+      },
+      ...this.emptyShared(),
+    };
+  }
+
+  /** Shared fields returned on every response so the frontend never reads undefined. */
+  private emptyShared() {
+    return {
+      balanceSheet: {
+        assets: {
+          nonCurrent: { ppe: 0, intangibles: 0, total: 0 },
+          current:    { commReceivable: 0, cashAtBank: 0, total: 0 },
+          total: 0,
+        },
+        liabilities: { bankOverdraft: 0, total: 0 },
+        equity:      { statedCapital: 0, retainedOpen: 0 },
+        netCashPosition: 0,
+      },
+      priorYear:    null,
+      loanSchedule: [],
+      loanHistory:  { years: [], accruedInterest: [] },
+      loanDetails:  {},
+      taxStatement: { cit2025: [], cit2024: [] },
+      fyFc:         0,
+      fyTx:         0,
+      fyExch:       0,
+      fyExpenses:   {},
+    };
+  }
+
+  private async yearSummary(userId: string, year: number, toDate?: string) {
+    const from = `${year}-01-01`;
+    const to   = toDate ?? `${year}-12-31`;
+
+    const [prodData, imprestData, jrnData, bankData] = await Promise.all([
+      this.supabase.db.from('production_entries')
+        .select('commission').eq('user_id', userId).gte('date', from).lte('date', to)
+        .then(r => r.data ?? []),
+
+      this.supabase.db.from('imprest_transactions')
+        .select('amount').eq('user_id', userId).eq('tx_type', 'payment').gte('date', from).lte('date', to)
+        .then(r => r.data ?? []),
+
+      this.supabase.db.from('journal_entries')
+        .select('dr_account, cr_account, amount').eq('user_id', userId).gte('date', from).lte('date', to)
+        .then(r => r.data ?? []),
+
+      this.supabase.db.from('bank_transactions')
+        .select('tx_type, amount_ghc').eq('user_id', userId).gte('date', from).lte('date', to)
+        .then(r => r.data ?? []),
+    ]);
+
+    const comm = prodData.reduce((s, r) => s + Number(r.commission), 0);
+    const exp  = imprestData.reduce((s, r) => s + Number(r.amount), 0);
+
+    let inv = 0, fc = 0, tx = 0, exchLoss = 0;
+    for (const row of jrnData) {
+      const dr  = (row.dr_account ?? '').toLowerCase();
+      const cr  = (row.cr_account ?? '').toLowerCase();
+      const amt = Number(row.amount);
+      if (cr.includes('interest income') || cr.includes('investment income')) inv += amt;
+      if (dr.includes('finance cost')    || dr.includes('interest expense'))  fc  += amt;
+      if (dr.includes('income tax')      || dr.includes('tax expense'))       tx  += amt;
+      if (dr.includes('exchange loss')   || dr.includes('fx loss'))           exchLoss += amt;
+    }
+
+    let cash = 0;
+    for (const row of bankData) {
+      cash += row.tx_type === 'Credit (Deposit)' ? Number(row.amount_ghc) : -Number(row.amount_ghc);
+    }
+
+    const net = comm + inv - exchLoss - exp - fc - tx;
+    return { comm, exp, inv, net, cash };
   }
 }

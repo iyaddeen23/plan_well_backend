@@ -1,6 +1,6 @@
-# Planwell Accounting — NestJS Backend
+# Magebooks Accounting — NestJS Backend
 
-REST API for the Planwell Insurance Brokerage accounting dashboard.  
+REST API for the Magebooks Insurance Brokerage accounting dashboard.  
 **Stack:** NestJS · TypeScript · Supabase (PostgreSQL + Auth) · Swagger
 
 ---
